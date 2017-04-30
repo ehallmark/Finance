@@ -1,5 +1,8 @@
 package model;
 
+import finance.Portfolio;
+import finance.TradingAlgorithm;
+import lombok.Getter;
 import model.functions.heuristic.MinimalCliqueSizeHeuristic;
 import model.functions.normalization.DivideByPartition;
 import model.graphs.BayesianNet;
@@ -10,21 +13,57 @@ import model.learning.algorithms.TrainingAlgorithm;
 import model.learning.distributions.DirichletCreator;
 import model.nodes.FactorNode;
 import model.nodes.Node;
+import model.trade_policy.InferenceTradePolicy;
+import model.trade_policy.MarketTradePolicy;
+import model.trade_policy.SingleStockPolicy;
 import util.Pair;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * Created by Evan on 4/29/2017.
  */
 public class TimeGraph {
-    public static BayesianNet trainCSV(File csv) throws IOException {
+    @Getter
+    private BayesianNet network;
+    @Getter
+    private CliqueTree cliqueTree;
+    @Getter
+    private List<Map<String,Double>> stockToPricesList;
+    @Getter
+    private List<Map<String,Double>> testStockToPricesList;
+    @Getter
+    private List<Map<String,Double>> validationStockToPricesList;
+    public TimeGraph(File csv) throws IOException{
+        this.stockToPricesList=new ArrayList<>();
+        this.testStockToPricesList=new ArrayList<>();
+        this.validationStockToPricesList=new ArrayList<>();
+        this.network=trainCSV(csv);
+        network.reNormalize(new DivideByPartition());
+        MarkovNet net = network.moralize();
+
+        // Triangulate and create clique tree
+        net.triangulateInPlace(new MinimalCliqueSizeHeuristic());
+        cliqueTree = net.createCliqueTree();
+        cliqueTree.reNormalize(new DivideByPartition());
+
+        System.out.println("Clique Tree: "+cliqueTree.toString());
+
+        cliqueTree.runBeliefPropagation();
+        cliqueTree.reNormalize(new DivideByPartition());
+        System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
+    }
+
+    private BayesianNet trainCSV(File csv) throws IOException {
         BufferedReader reader = new BufferedReader(new FileReader(csv));
         List<String> companies = new ArrayList<>();
         // build net
@@ -61,33 +100,34 @@ public class TimeGraph {
         double[] pricesThisPeriod = null;
 
         String line = reader.readLine();
-        List<Map<String,int[]>> trainingSet = new ArrayList<>();
-        List<Map<String,int[]>> validationSet = new ArrayList<>();
-        List<Map<String,int[]>> testSet = new ArrayList<>();
-        Random rand = new Random(69);
-        int i = 0;
-        while(line!=null) {
-            pricesThisPeriod=getPricesFromRow(line);
+        List<Map<String,int[]>> trainingSet;
+        List<Map<String,int[]>> validationSet;
+        List<Map<String,int[]>> testSet;
+        {
+            List<Map<String, int[]>> allAssignments = new ArrayList<>();
+            int i = 0;
+            while (line != null) {
+                pricesThisPeriod = getPricesFromRow(line);
 
-            Map<String,int[]> assignment = createAssignment(pricesTwoPeriodsAgo,pricesLastPeriod,pricesThisPeriod,companies);
+                Map<String, int[]> assignment = createAssignment(pricesTwoPeriodsAgo, pricesLastPeriod, pricesThisPeriod, companies);
+                Map<String, Double> prices = createPricesMap(pricesThisPeriod, companies);
 
-            double randomNumber = rand.nextDouble();
-            if(randomNumber<=0.15) {
-                testSet.add(assignment);
-            } else {
-                if(randomNumber <= 0.3) {
-                    validationSet.add(assignment);
-                } else {
-                    trainingSet.add(assignment);
-                }
+                allAssignments.add(assignment);
+                stockToPricesList.add(prices);
+
+                // set prices as next prices
+                pricesTwoPeriodsAgo = pricesLastPeriod;
+                pricesLastPeriod = pricesThisPeriod;
+                line = reader.readLine();
+                System.out.println("Finished data point: " + i);
+                i++;
             }
-
-            // set prices as next prices
-            pricesTwoPeriodsAgo=pricesLastPeriod;
-            pricesLastPeriod=pricesThisPeriod;
-            line=reader.readLine();
-            System.out.println("Finished data point: "+i);
-            i++;
+            trainingSet=allAssignments.subList(0,(3*allAssignments.size())/5);
+            validationSet=allAssignments.subList((3*allAssignments.size())/5,(4*allAssignments.size())/5);
+            validationStockToPricesList.addAll(stockToPricesList.subList((3*allAssignments.size())/5,(4*allAssignments.size())/5));
+            testSet=allAssignments.subList((4*allAssignments.size())/5,allAssignments.size());
+            testStockToPricesList.addAll(stockToPricesList.subList((4*allAssignments.size())/5,allAssignments.size()));
+            stockToPricesList.removeAll(new ArrayList<>(stockToPricesList.subList((3*allAssignments.size())/5,allAssignments.size())));
         }
         reader.close();
 
@@ -99,9 +139,17 @@ public class TimeGraph {
         net.setTrainingData(trainingSet);
         net.setTestData(testSet);
         net.setValidationData(validationSet);
-        net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(5f),1),1);
+        net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(30f),1),1);
 
         return net;
+    }
+
+    static Map<String,Double> createPricesMap(double[] prices, List<String> companies) {
+        Map<String,Double> map = new HashMap<>();
+        for(int i = 0; i < companies.size(); i++) {
+            map.put(companies.get(i),prices[i]);
+        }
+        return map;
     }
 
     static Map<String,int[]> createAssignment(double[] twoPeriodsAgo, double[] lastPeriod, double[] thisPeriod, List<String> companies) {
@@ -139,51 +187,21 @@ public class TimeGraph {
     }
 
     public static void main(String[] args) throws Exception {
-        BayesianNet bayesianNet = trainCSV(new File("sample_stock_output_small.csv"));
-        bayesianNet.reNormalize(new DivideByPartition());
+        File file = new File("sample_stock_output_small.csv");
+        TimeGraph timeGraph = new TimeGraph(file);
 
-        Collection<Map<String,int[]>> tests = bayesianNet.getTestData();
+        double startingCash = 50000d;
+        double transactionCost = 1d;
+        Portfolio portfolio = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
+        Portfolio portfolioCopy = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
+        Portfolio portfolioApple = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
+        double avgRateOfReturn = portfolio.determineTrades(new TimeGraphAlgorithm(timeGraph,timeGraph.getNetwork().getTestData()), new InferenceTradePolicy(timeGraph.getNetwork(),timeGraph.getCliqueTree(),portfolio));
+        double avgRateOfReturnMarket = portfolioCopy.determineTrades(new TimeGraphAlgorithm(timeGraph,timeGraph.getNetwork().getTestData()), new MarketTradePolicy(portfolioCopy));
+        double avgRateOfReturnApple = portfolioApple.determineTrades(new TimeGraphAlgorithm(timeGraph,timeGraph.getNetwork().getTestData()), new SingleStockPolicy("aapl",portfolioApple));
 
-        MarkovNet net = bayesianNet.moralize();
-
-        // Triangulate and create clique tree
-        net.triangulateInPlace(new MinimalCliqueSizeHeuristic());
-        CliqueTree cliqueTree = net.createCliqueTree();
-        cliqueTree.reNormalize(new DivideByPartition());
-
-        System.out.println("Clique Tree: "+cliqueTree.toString());
-
-        cliqueTree.runBeliefPropagation();
-        cliqueTree.reNormalize(new DivideByPartition());
-        System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
-
-        AtomicInteger correct = new AtomicInteger(0);
-        AtomicInteger total = new AtomicInteger(0);
-        tests.forEach(test->{
-            cliqueTree.setCurrentAssignment(test.entrySet().stream().map(e->{
-                if(!e.getKey().endsWith("future")) return new Pair<>(e.getKey(),e.getValue()[0]);
-                else return null;
-            }).filter(a->a!=null).collect(Collectors.toList()));
-            cliqueTree.getFactorNodes().forEach(factor->{
-                List<String> labelsToSum = Arrays.stream(factor.getVarLabels()).filter(label->!label.endsWith("future")).collect(Collectors.toList());
-                FactorNode f = factor;
-                for(String label : labelsToSum) {
-                    f=f.multiply(Graph.givenValueFactor(net.findNode(label),test.get(label)[0]));
-                }
-                FactorNode result = f.sumOut(labelsToSum.toArray(new String[labelsToSum.size()]));
-                result.reNormalize(new DivideByPartition());
-                boolean predictedWentUp = result.getWeights()[0]<result.getWeights()[1];
-                boolean actualWentUp = test.get(result.getVarLabels()[0])[0]>0.5;
-                if((predictedWentUp&&actualWentUp)||(!predictedWentUp&&!actualWentUp)) {
-                    correct.getAndIncrement();
-                }
-                total.getAndIncrement();
-                System.out.println(result);
-            });
-            // run BP
-        });
-
-        System.out.println("Correct: "+correct.get()+"/"+total.get());
-
+        NumberFormat formatter = new DecimalFormat("#0.00");
+        System.out.println("Average Return **My Model**: "+ formatter.format(avgRateOfReturn*100)+"%");
+        System.out.println("Average Return Market: "+ formatter.format(avgRateOfReturnMarket*100)+"%");
+        System.out.println("Average Return Apple: "+ formatter.format(avgRateOfReturnApple*100)+"%");
     }
 }
