@@ -1,10 +1,15 @@
 package model;
 
+import model.functions.heuristic.MinimalCliqueSizeHeuristic;
 import model.functions.normalization.DivideByPartition;
 import model.graphs.BayesianNet;
+import model.graphs.CliqueTree;
+import model.graphs.MarkovNet;
 import model.learning.algorithms.TrainingAlgorithm;
 import model.learning.distributions.DirichletCreator;
+import model.nodes.FactorNode;
 import model.nodes.Node;
+import util.Pair;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -12,6 +17,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * Created by Evan on 4/29/2017.
@@ -89,15 +95,10 @@ public class TimeGraph {
         System.out.println("Validation Size: "+validationSet.size());
         System.out.println("Test Size: "+testSet.size());
 
-        net.setAssignments(trainingSet);
+        net.setTrainingData(trainingSet);
+        net.setTestData(testSet);
+        net.setValidationData(validationSet);
         net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(10f),1),1);
-
-
-        net.reNormalize(new DivideByPartition());
-
-        net.getFactorNodes().forEach(factor->{
-            System.out.println("Factor: "+factor);
-        });
 
         return net;
     }
@@ -137,6 +138,31 @@ public class TimeGraph {
     }
 
     public static void main(String[] args) throws Exception {
-        trainCSV(new File("sample_stock_output.csv"));
+        BayesianNet bayesianNet = trainCSV(new File("sample_stock_output.csv"));
+
+        Collection<Map<String,int[]>> tests = bayesianNet.getTestData();
+
+
+        MarkovNet net = bayesianNet.moralize();
+
+        // Triangulate and create clique tree
+        net.triangulateInPlace(new MinimalCliqueSizeHeuristic());
+        CliqueTree cliqueTree = net.createCliqueTree();
+
+
+        tests.forEach(test->{
+            bayesianNet.setCurrentAssignment(test.entrySet().stream().map(e->{
+                return new Pair<>(e.getKey(),e.getValue()[0]);
+            }).collect(Collectors.toList()));
+            // run BP
+            cliqueTree.runBeliefPropagation();
+
+            // Re-Normalize Values to Probabilities
+            cliqueTree.reNormalize(new DivideByPartition());
+
+            System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
+        });
+
+
     }
 }
