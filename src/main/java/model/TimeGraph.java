@@ -4,6 +4,7 @@ import model.functions.heuristic.MinimalCliqueSizeHeuristic;
 import model.functions.normalization.DivideByPartition;
 import model.graphs.BayesianNet;
 import model.graphs.CliqueTree;
+import model.graphs.Graph;
 import model.graphs.MarkovNet;
 import model.learning.algorithms.TrainingAlgorithm;
 import model.learning.distributions.DirichletCreator;
@@ -55,9 +56,9 @@ public class TimeGraph {
         // Train
         System.out.println("Network: "+net.toString());
 
-        float[] pricesTwoPeriodsAgo = getPricesFromRow(reader.readLine());
-        float[] pricesLastPeriod = getPricesFromRow(reader.readLine());
-        float[] pricesThisPeriod = null;
+        double[] pricesTwoPeriodsAgo = getPricesFromRow(reader.readLine());
+        double[] pricesLastPeriod = getPricesFromRow(reader.readLine());
+        double[] pricesThisPeriod = null;
 
         String line = reader.readLine();
         List<Map<String,int[]>> trainingSet = new ArrayList<>();
@@ -98,12 +99,12 @@ public class TimeGraph {
         net.setTrainingData(trainingSet);
         net.setTestData(testSet);
         net.setValidationData(validationSet);
-        net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(10f),1),1);
+        net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(5f),1),1);
 
         return net;
     }
 
-    static Map<String,int[]> createAssignment(float[] twoPeriodsAgo, float[] lastPeriod, float[] thisPeriod, List<String> companies) {
+    static Map<String,int[]> createAssignment(double[] twoPeriodsAgo, double[] lastPeriod, double[] thisPeriod, List<String> companies) {
         Map<String,int[]> assignment = new HashMap<>();
         for(int i = 0; i < companies.size(); i++) {
             String company = companies.get(i);
@@ -128,9 +129,9 @@ public class TimeGraph {
         return assignment;
     };
 
-    static float[] getPricesFromRow(String line) {
+    static double[] getPricesFromRow(String line) {
         String[] cells = line.split(",");
-        float[] prices = new float[cells.length-1];
+        double[] prices = new double[cells.length-1];
         for(int c = 1; c < cells.length; c++) {
             prices[c-1]=Float.valueOf(cells[c]);
         }
@@ -138,31 +139,51 @@ public class TimeGraph {
     }
 
     public static void main(String[] args) throws Exception {
-        BayesianNet bayesianNet = trainCSV(new File("sample_stock_output.csv"));
+        BayesianNet bayesianNet = trainCSV(new File("sample_stock_output_small.csv"));
+        bayesianNet.reNormalize(new DivideByPartition());
 
         Collection<Map<String,int[]>> tests = bayesianNet.getTestData();
-
 
         MarkovNet net = bayesianNet.moralize();
 
         // Triangulate and create clique tree
         net.triangulateInPlace(new MinimalCliqueSizeHeuristic());
         CliqueTree cliqueTree = net.createCliqueTree();
+        cliqueTree.reNormalize(new DivideByPartition());
 
+        System.out.println("Clique Tree: "+cliqueTree.toString());
 
+        cliqueTree.runBeliefPropagation();
+        cliqueTree.reNormalize(new DivideByPartition());
+        System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
+
+        AtomicInteger correct = new AtomicInteger(0);
+        AtomicInteger total = new AtomicInteger(0);
         tests.forEach(test->{
-            bayesianNet.setCurrentAssignment(test.entrySet().stream().map(e->{
-                return new Pair<>(e.getKey(),e.getValue()[0]);
-            }).collect(Collectors.toList()));
+            cliqueTree.setCurrentAssignment(test.entrySet().stream().map(e->{
+                if(!e.getKey().endsWith("future")) return new Pair<>(e.getKey(),e.getValue()[0]);
+                else return null;
+            }).filter(a->a!=null).collect(Collectors.toList()));
+            cliqueTree.getFactorNodes().forEach(factor->{
+                List<String> labelsToSum = Arrays.stream(factor.getVarLabels()).filter(label->!label.endsWith("future")).collect(Collectors.toList());
+                FactorNode f = factor;
+                for(String label : labelsToSum) {
+                    f=f.multiply(Graph.givenValueFactor(net.findNode(label),test.get(label)[0]));
+                }
+                FactorNode result = f.sumOut(labelsToSum.toArray(new String[labelsToSum.size()]));
+                result.reNormalize(new DivideByPartition());
+                boolean predictedWentUp = result.getWeights()[0]<result.getWeights()[1];
+                boolean actualWentUp = test.get(result.getVarLabels()[0])[0]>0.5;
+                if((predictedWentUp&&actualWentUp)||(!predictedWentUp&&!actualWentUp)) {
+                    correct.getAndIncrement();
+                }
+                total.getAndIncrement();
+                System.out.println(result);
+            });
             // run BP
-            cliqueTree.runBeliefPropagation();
-
-            // Re-Normalize Values to Probabilities
-            cliqueTree.reNormalize(new DivideByPartition());
-
-            System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
         });
 
+        System.out.println("Correct: "+correct.get()+"/"+total.get());
 
     }
 }
