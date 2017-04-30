@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  * Created by Evan on 4/29/2017.
  */
 public class Requester {
-    public static final List<String> HEADERS = Collections.unmodifiableList(Arrays.asList("date","open","close","low","high"));
+    public static final List<String> HEADERS = Collections.unmodifiableList(Arrays.asList("date","price"));
 
     public static List<List<String>> requestStockData(LocalDate startDate, LocalDate endDate, String... stockSymbols) throws IOException{
         List<List<List<String>>> toMerge = new ArrayList<>();
@@ -36,11 +36,8 @@ public class Requester {
                     List<String> point = new ArrayList<>();
                     LocalDate date = DateHelper.fromDate(request.getDate());
                     point.add(date.toString());
-                    point.add(String.valueOf(request.getOpen()));
-                    point.add(String.valueOf(request.getClose()));
-                    point.add(String.valueOf(request.getLow()));
-                    point.add(String.valueOf(request.getHigh()));
-                    data.add(point);
+                    point.add(String.valueOf((request.getOpen()+request.getClose()+request.getHigh()+request.getLow())/4));
+                    data.add(1,point);
                 }
                 toMerge.add(data);
             } catch(Exception e) {
@@ -76,7 +73,7 @@ public class Requester {
 
     public static void main(String[] args) throws IOException{
         BufferedWriter writer = new BufferedWriter(new FileWriter(new File("sample_stock_output.csv")));
-        requestStockData(LocalDate.now().minusYears(3),LocalDate.now(),"vti","s","luv","goog","msft","fez","vpl","vgk","vea","bnd","intc","wmt","kr","tsla","gm","cmg","aapl","amzn","nflx","sina","pcln","pg").forEach(line->{
+        requestStockData(LocalDate.of(2014,4,29),LocalDate.of(2017,4,29),"goog","vti","s","luv","msft","fez","vpl","vgk","vea","bnd","intc","wmt","kr","tsla","gm","cmg","t","aapl","amzn","nflx","sina","pcln","pg").forEach(line->{
             String dataLine = String.join(",",line);
             System.out.println(dataLine);
             try {
