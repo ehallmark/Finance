@@ -4,26 +4,19 @@ import com.google.common.util.concurrent.AtomicDouble;
 import finance.Portfolio;
 import finance.Trade;
 import finance.TradingAlgorithm;
-import model.functions.normalization.DivideByPartition;
-import model.graphs.CliqueTree;
-import model.graphs.Graph;
-import model.nodes.FactorNode;
+
 import model.trade_policy.TradePolicy;
-import util.Pair;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Created by Evan on 4/30/2017.
  */
 public class TimeGraphAlgorithm implements TradingAlgorithm {
-    private TimeGraph graph;
     private Collection<Map<String,int[]>> assignmentsOverTime;
-    public TimeGraphAlgorithm(TimeGraph graph, Collection<Map<String,int[]>> assignmentsOverTime) {
-        this.graph=graph;
+    public TimeGraphAlgorithm(Collection<Map<String,int[]>> assignmentsOverTime) {
         this.assignmentsOverTime=assignmentsOverTime;
     }
     @Override

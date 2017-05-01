@@ -31,6 +31,8 @@ public class InferenceTradePolicy implements TradePolicy {
             else return null;
         }).filter(a->a!=null).collect(Collectors.toList()));
         List<Pair<String,Double>> all = cliqueTree.getFactorNodes().stream().map(factor->{
+            Optional<String> option = Arrays.stream(factor.getVarLabels()).filter(label->label.endsWith("future")).findFirst();
+            if(!option.isPresent()) return null;
             List<String> labelsToSum = Arrays.stream(factor.getVarLabels()).filter(label->!label.endsWith("future")).collect(Collectors.toList());
             FactorNode f = factor;
             for(String label : labelsToSum) {
@@ -39,10 +41,7 @@ public class InferenceTradePolicy implements TradePolicy {
             FactorNode result = f.sumOut(labelsToSum.toArray(new String[labelsToSum.size()]));
             result.reNormalize(new DivideByPartition());
             double prediction = result.getWeights()[1];
-            Optional<String> option = Arrays.stream(factor.getVarLabels()).filter(label->label.endsWith("future")).findFirst();
-            if(option.isPresent()) {
-                return new Pair<>(option.get(),prediction);
-            } else return null;
+            return new Pair<>(option.get(),prediction);
         }).filter(p->p!=null).map(pair->new Pair<>(pair._1.replace("_future",""),pair._2)).sorted((p1,p2)->p2._2.compareTo(p1._2)).collect(Collectors.toList());
 
         List<Trade> trades = new ArrayList<>();
