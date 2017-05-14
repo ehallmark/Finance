@@ -13,6 +13,7 @@ import model.learning.algorithms.MarkovLearningAlgorithm;
 import model.nodes.Node;
 import model.trade_policy.InferenceTradePolicy;
 import model.trade_policy.MarketTradePolicy;
+import model.trade_policy.MutlipleStockPolicy;
 import model.trade_policy.SingleStockPolicy;
 
 import java.io.BufferedReader;
@@ -224,12 +225,12 @@ public class TimeGraph {
         TimeGraph timeGraph = new TimeGraph(file,2,20);
 
         Portfolio portfolioCopy = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
-        Portfolio portfolioApple = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
+        Portfolio portfolioPortfolio = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
         double avgRateOfReturnMarket = portfolioCopy.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MarketTradePolicy(portfolioCopy));
-        double avgRateOfReturnApple = portfolioApple.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new SingleStockPolicy("kr",portfolioApple));
+        double avgRateOfReturnPortfolio = portfolioPortfolio.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MutlipleStockPolicy(portfolioPortfolio,"goog","amzn","kr","tsla","dji","wmt"));
 
         System.out.println("Average Return Market (DJI): "+ formatter.format(avgRateOfReturnMarket*100)+"%");
-        System.out.println("Average Return Apple: "+ formatter.format(avgRateOfReturnApple*100)+"%");
+        System.out.println("Average Return Portfolio: "+ formatter.format(avgRateOfReturnPortfolio*100)+"%");
         System.out.println("Best Layer Size **MY MODEL**: "+bestLayerSize);
         System.out.println("Best Alpha **MY MODEL**: "+bestAlpha);
         System.out.println("    Return: "+formatter.format(bestReturn*100)+"%");

@@ -11,12 +11,12 @@ import java.util.Map;
 /**
  * Created by Evan on 4/30/2017.
  */
-public class SingleStockPolicy implements TradePolicy {
+public class MutlipleStockPolicy implements TradePolicy {
     protected Portfolio portfolio;
-    protected String stock;
-    public SingleStockPolicy(String stock, Portfolio portfolio) {
+    protected String[] stocks;
+    public MutlipleStockPolicy(Portfolio portfolio, String... stocks) {
         this.portfolio=portfolio;
-        this.stock=stock;
+        this.stocks=stocks;
     }
     @Override
     public List<Trade> getTrades(Map<String,Integer> assignment, int idx) {
@@ -25,12 +25,14 @@ public class SingleStockPolicy implements TradePolicy {
             // To buy
             double availableCash = portfolio.getAvailableCash();
             List<Trade> trades = new ArrayList<>();
-            if (availableCash > portfolio.getTransactionCost()) {
-                double stockPrice = portfolio.stockPriceAtTime(stock, idx);
-                double shares = (availableCash-portfolio.getTransactionCost()) / stockPrice;
-                Trade trade = new Trade(stock, shares);
-                if (portfolio.makeTrade(trade, stockPrice)) {
-                    trades.add(trade);
+            if (availableCash > portfolio.getTransactionCost()*stocks.length) {
+                for(String stock : stocks) {
+                    double stockPrice = portfolio.stockPriceAtTime(stock, idx);
+                    double shares = (availableCash-portfolio.getTransactionCost()) / (stockPrice*stocks.length);
+                    Trade trade = new Trade(stock, shares);
+                    if (portfolio.makeTrade(trade, stockPrice)) {
+                        trades.add(trade);
+                    }
                 }
             }
             return trades;
