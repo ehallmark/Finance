@@ -227,7 +227,7 @@ public class TimeGraph {
         Portfolio portfolioCopy = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
         Portfolio portfolioPortfolio = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
         double avgRateOfReturnMarket = portfolioCopy.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MarketTradePolicy(portfolioCopy));
-        double avgRateOfReturnPortfolio = portfolioPortfolio.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MutlipleStockPolicy(portfolioPortfolio,"goog","amzn","kr","tsla","dji","wmt"));
+        double avgRateOfReturnPortfolio = portfolioPortfolio.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MutlipleStockPolicy(portfolioPortfolio,"goog","amzn","kr","tsla","dji","wmt","aapl"));
 
         System.out.println("Average Return Market (DJI): "+ formatter.format(avgRateOfReturnMarket*100)+"%");
         System.out.println("Average Return Portfolio: "+ formatter.format(avgRateOfReturnPortfolio*100)+"%");
