@@ -9,5 +9,5 @@ import java.util.Map;
  * Created by Evan on 4/30/2017.
  */
 public interface TradePolicy {
-    List<Trade> getTrades(Map<String,int[]> assignment, int idx);
+    List<Trade> getTrades(Map<String,Integer> assignment, int idx);
 }

@@ -15,8 +15,8 @@ import java.util.function.Function;
  * Created by Evan on 4/30/2017.
  */
 public class TimeGraphAlgorithm implements TradingAlgorithm {
-    private Collection<Map<String,int[]>> assignmentsOverTime;
-    public TimeGraphAlgorithm(Collection<Map<String,int[]>> assignmentsOverTime) {
+    private Collection<Map<String,Integer>> assignmentsOverTime;
+    public TimeGraphAlgorithm(Collection<Map<String,Integer>> assignmentsOverTime) {
         this.assignmentsOverTime=assignmentsOverTime;
     }
     @Override

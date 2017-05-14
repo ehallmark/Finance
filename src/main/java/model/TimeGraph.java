@@ -1,22 +1,19 @@
 package model;
 
 import finance.Portfolio;
-import finance.TradingAlgorithm;
 import lombok.Getter;
-import model.functions.heuristic.MinimalCliqueSizeHeuristic;
+import model.functions.inference_methods.BeliefPropagation;
 import model.functions.normalization.DivideByPartition;
 import model.graphs.BayesianNet;
-import model.graphs.CliqueTree;
 import model.graphs.Graph;
 import model.graphs.MarkovNet;
-import model.learning.algorithms.TrainingAlgorithm;
-import model.learning.distributions.DirichletCreator;
-import model.nodes.FactorNode;
+import model.learning.algorithms.BayesianLearningAlgorithm;
+import model.learning.algorithms.LearningAlgorithm;
+import model.learning.algorithms.MarkovLearningAlgorithm;
 import model.nodes.Node;
 import model.trade_policy.InferenceTradePolicy;
 import model.trade_policy.MarketTradePolicy;
 import model.trade_policy.SingleStockPolicy;
-import util.Pair;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -25,45 +22,32 @@ import java.io.IOException;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Created by Evan on 4/29/2017.
  */
 public class TimeGraph {
     @Getter
-    private BayesianNet network;
-    @Getter
-    private CliqueTree cliqueTree;
+    private volatile Graph network;
     @Getter
     private List<Map<String,Double>> stockToPricesList;
     @Getter
     private List<Map<String,Double>> testStockToPricesList;
     @Getter
     private List<Map<String,Double>> validationStockToPricesList;
-    public TimeGraph(File csv, int numLayers) throws IOException{
+    @Getter
+    protected LearningAlgorithm learningAlgorithm;
+    protected double alpha;
+    public TimeGraph(File csv, int numLayers, double alpha) throws IOException{
         this.stockToPricesList=new ArrayList<>();
         this.testStockToPricesList=new ArrayList<>();
+        this.alpha=alpha;
         this.validationStockToPricesList=new ArrayList<>();
         this.network=trainCSV(csv,numLayers);
         network.reNormalize(new DivideByPartition());
-        MarkovNet net = network.moralize();
-
-        // Triangulate and create clique tree
-        net.triangulateInPlace(new MinimalCliqueSizeHeuristic());
-        cliqueTree = net.createCliqueTree();
-        cliqueTree.reNormalize(new DivideByPartition());
-
-        System.out.println("Clique Tree: "+cliqueTree.toString());
-
-        cliqueTree.runBeliefPropagation();
-        cliqueTree.reNormalize(new DivideByPartition());
-        System.out.println("Clique Tree (after BP): "+cliqueTree.toString());
     }
 
-    private BayesianNet trainCSV(File csv, int numLayers) throws IOException {
+    private Graph trainCSV(File csv, int numLayers) throws IOException {
         if(numLayers<2) throw new RuntimeException("Num layers must be at least 2");
         BufferedReader reader = new BufferedReader(new FileReader(csv));
         List<String> companies = new ArrayList<>();
@@ -77,24 +61,30 @@ public class TimeGraph {
             companies.add(split[1]);
         }
         // Add nodes
-        companies.forEach(company->{
+        companies.stream().forEach(company->{
             for(int i = 1; i < numLayers; i++) {
                 net.addBinaryNode(company+"_"+i);
             }
             net.addBinaryNode(company+"_future");
         });
         // Connect nodes
-        companies.forEach(company->{
+        companies.stream().forEach(company->{
             for(int i = 1; i < numLayers; i++) {
                 Node n1 = net.findNode(company+"_"+i);
-                net.addFactorNode(null, n1); // Unary factor
+                if(n1==null){
+                    throw new RuntimeException("Cannot find n1");
+                }
+                if(i==1)net.addFactorNode(null, n1); // Unary factor
                 Node n1NextStep = net.findNode(company+"_"+(i+1));
                 if(n1NextStep!=null) {
-                    net.connectNodes(n1,n1NextStep);
+                    net.connectNodes(n1, n1NextStep);
                     net.addFactorNode(null, n1, n1NextStep);
                 } else {
                     companies.forEach(company2 -> {
                         Node n2 = net.findNode(company2 + "_future");
+                        if(n2==null){
+                            throw new RuntimeException("Cannot find n2");
+                        }
                         net.connectNodes(n1, n2);
                         net.addFactorNode(null, n1, n2);
                     });
@@ -112,16 +102,16 @@ public class TimeGraph {
         }
         double[] pricesThisPeriod;
         String line = reader.readLine();
-        List<Map<String,int[]>> trainingSet;
-        List<Map<String,int[]>> validationSet;
-        List<Map<String,int[]>> testSet;
+        List<Map<String,Integer>> trainingSet;
+        List<Map<String,Integer>> validationSet;
+        List<Map<String,Integer>> testSet;
         {
-            List<Map<String, int[]>> allAssignments = new ArrayList<>();
+            List<Map<String, Integer>> allAssignments = new ArrayList<>();
             int i = 0;
             while (line != null) {
                 pricesThisPeriod = getPricesFromRow(line);
 
-                Map<String, int[]> assignment = createAssignment(periodsAgo, pricesThisPeriod, companies);
+                Map<String, Integer> assignment = createAssignment(periodsAgo, pricesThisPeriod, companies);
                 Map<String, Double> prices = createPricesMap(pricesThisPeriod, companies);
 
                 allAssignments.add(assignment);
@@ -136,12 +126,12 @@ public class TimeGraph {
                 System.out.println("Finished data point: " + i);
                 i++;
             }
-            trainingSet=allAssignments.subList(0,(3*allAssignments.size())/5);
-            validationSet=allAssignments.subList((3*allAssignments.size())/5,(4*allAssignments.size())/5);
-            validationStockToPricesList.addAll(stockToPricesList.subList((3*allAssignments.size())/5,(4*allAssignments.size())/5));
-            testSet=allAssignments.subList((4*allAssignments.size())/5,allAssignments.size());
-            testStockToPricesList.addAll(stockToPricesList.subList((4*allAssignments.size())/5,allAssignments.size()));
-            stockToPricesList.removeAll(new ArrayList<>(stockToPricesList.subList((3*allAssignments.size())/5,allAssignments.size())));
+            trainingSet=allAssignments.subList(0,(allAssignments.size())/2);
+            validationSet=allAssignments.subList((allAssignments.size())/2,(3*allAssignments.size())/4);
+            validationStockToPricesList.addAll(stockToPricesList.subList((allAssignments.size())/2,(3*allAssignments.size())/4));
+            testSet=allAssignments.subList((3*allAssignments.size())/4,allAssignments.size());
+            testStockToPricesList.addAll(stockToPricesList.subList((3*allAssignments.size())/4,allAssignments.size()));
+            stockToPricesList.removeAll(new ArrayList<>(stockToPricesList.subList((allAssignments.size())/2,allAssignments.size())));
         }
         reader.close();
 
@@ -153,7 +143,8 @@ public class TimeGraph {
         net.setTrainingData(trainingSet);
         net.setTestData(testSet);
         net.setValidationData(validationSet);
-        net.applyLearningAlgorithm(new TrainingAlgorithm(new DirichletCreator(10f),1),1);
+        learningAlgorithm=new BayesianLearningAlgorithm(net,alpha);
+        net.applyLearningAlgorithm(learningAlgorithm,2);
 
         return net;
     }
@@ -166,27 +157,27 @@ public class TimeGraph {
         return map;
     }
 
-    static Map<String,int[]> createAssignment(double[][] periodsAgo, double[] thisPeriod, List<String> companies) {
-        Map<String,int[]> assignment = new HashMap<>();
+    static Map<String,Integer> createAssignment(double[][] periodsAgo, double[] thisPeriod, List<String> companies) {
+        Map<String,Integer> assignment = new HashMap<>();
         for(int i = 0; i < companies.size(); i++) {
             String company = companies.get(i);
             double[] lastPeriod = periodsAgo[periodsAgo.length-1];
             boolean wentUpThisPeriod = thisPeriod[i]-lastPeriod[i]>0;
-            int[] valThisPeriod;
+            int valThisPeriod;
             if(wentUpThisPeriod) {
-                valThisPeriod=new int[]{1};
+                valThisPeriod=1;
             } else {
-                valThisPeriod=new int[]{0};
+                valThisPeriod=0;
             }
             assignment.put(company+"_future",valThisPeriod);
 
             for(int j = periodsAgo.length-1; j >0; j--) {
                 boolean wentUpLastPeriod = periodsAgo[j][i] - periodsAgo[j-1][i] > 0;
-                int[] valLastPeriod;
-                if (wentUpLastPeriod) {
-                    valLastPeriod = new int[]{1};
+                int valLastPeriod;
+                if(wentUpLastPeriod) {
+                    valLastPeriod=1;
                 } else {
-                    valLastPeriod = new int[]{0};
+                    valLastPeriod=0;
                 }
                 assignment.put(company+"_"+j, valLastPeriod);
             }
@@ -204,22 +195,43 @@ public class TimeGraph {
     }
 
     public static void main(String[] args) throws Exception {
+        NumberFormat formatter = new DecimalFormat("#0.00");
         File file = new File("sample_stock_output_small.csv");
-        double startingCash = 50000d;
-        double transactionCost = 5d;
-        int numLayers = 3;
+        double startingCash = 100000d;
+        double transactionCost = 1d;
+        int numLayers = 10;
+        double stopLoss = 1111110d;
+        double takeProfit =1111110d;
 
-        TimeGraph timeGraph = new TimeGraph(file,numLayers);
-        Portfolio portfolio = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
+        double bestReturn = Double.MIN_VALUE;
+        int bestLayerSize = -1;
+        double bestAlpha = 0d;
+        for(int i = 4; i < numLayers; i+=2) {
+            for(double alpha = 2d; alpha < 6d; alpha+=5) {
+                TimeGraph timeGraph = new TimeGraph(file, i, alpha);
+                Portfolio portfolio = new Portfolio(timeGraph.getTestStockToPricesList(), startingCash, transactionCost);
+                double avgRateOfReturn = portfolio.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new InferenceTradePolicy(timeGraph.getNetwork(), portfolio, timeGraph.getLearningAlgorithm(),stopLoss,takeProfit));
+                if (avgRateOfReturn > bestReturn) {
+                    bestReturn = avgRateOfReturn;
+                    bestLayerSize = i;
+                    bestAlpha=alpha;
+                }
+                System.out.println("Average Return **My Model [numLayers=" + i + ", alpha="+alpha+"]**: " + formatter.format(avgRateOfReturn * 100) + "%");
+            }
+
+        }
+
+        TimeGraph timeGraph = new TimeGraph(file,2,20);
+
         Portfolio portfolioCopy = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
         Portfolio portfolioApple = new Portfolio(timeGraph.getTestStockToPricesList(),startingCash,transactionCost);
-        double avgRateOfReturn = portfolio.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new InferenceTradePolicy(timeGraph.getNetwork(),timeGraph.getCliqueTree(),portfolio));
         double avgRateOfReturnMarket = portfolioCopy.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new MarketTradePolicy(portfolioCopy));
-        double avgRateOfReturnApple = portfolioApple.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new SingleStockPolicy("aapl",portfolioApple));
+        double avgRateOfReturnApple = portfolioApple.determineTrades(new TimeGraphAlgorithm(timeGraph.getNetwork().getTestData()), new SingleStockPolicy("kr",portfolioApple));
 
-        NumberFormat formatter = new DecimalFormat("#0.00");
-        System.out.println("Average Return **My Model**: "+ formatter.format(avgRateOfReturn*100)+"%");
         System.out.println("Average Return Market (DJI): "+ formatter.format(avgRateOfReturnMarket*100)+"%");
         System.out.println("Average Return Apple: "+ formatter.format(avgRateOfReturnApple*100)+"%");
+        System.out.println("Best Layer Size **MY MODEL**: "+bestLayerSize);
+        System.out.println("Best Alpha **MY MODEL**: "+bestAlpha);
+        System.out.println("    Return: "+formatter.format(bestReturn*100)+"%");
     }
 }

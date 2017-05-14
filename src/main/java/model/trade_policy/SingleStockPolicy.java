@@ -19,7 +19,7 @@ public class SingleStockPolicy implements TradePolicy {
         this.stock=stock;
     }
     @Override
-    public List<Trade> getTrades(Map<String,int[]> assignment, int idx) {
+    public List<Trade> getTrades(Map<String,Integer> assignment, int idx) {
         if(idx==0) {
             // buy all shares of dow jones industrial (dji)
             // To buy
